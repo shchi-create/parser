@@ -1,6 +1,7 @@
 import os
 import base64
 import json
+import nest_asyncio   # <-- новый импорт
 from datetime import datetime, timedelta, timezone
 from flask import Flask
 from telethon import TelegramClient
@@ -8,6 +9,9 @@ from telethon.tl.functions.messages import GetHistoryRequest
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2.service_account import Credentials
+
+nest_asyncio.apply()  # <-- применяем патч для Flask/Railway
+
 
 # -------------------- Telegram session --------------------
 session_b64 = os.environ.get("SESSION_PART1", "") + os.environ.get("SESSION_PART2", "")
