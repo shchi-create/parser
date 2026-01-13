@@ -1,7 +1,7 @@
-telethon
-google-api-python-client
-google-auth
-google-auth-httplib2
-google-auth-oauthlib
-flask
-nest_asyncio
+Flask==2.3.3
+telethon==3.4.1
+google-api-python-client==2.97.0
+google-auth==2.22.0
+google-auth-httplib2==0.1.0
+google-auth-oauthlib==1.0.0
+nest_asyncio==1.6.6
