@@ -1,32 +1,43 @@
 import os
-import json
-import asyncio
+import base64
 from datetime import datetime, timedelta, timezone
 from flask import Flask
-from telethon import TelegramClient
+from telethon.sync import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2.service_account import Credentials
 
-API_ID = int(os.environ.get("API_ID"))
-API_HASH = os.environ.get("API_HASH")
-CHANNEL = os.environ.get("CHANNEL")
-GDRIVE_FOLDER_ID = os.environ.get("GDRIVE_FOLDER_ID")
+# -------------------- Telegram session --------------------
+# собираем session.session из двух частей
+session_b64 = os.environ.get("SESSION_PART1", "") + os.environ.get("SESSION_PART2", "")
+if session_b64:
+    with open("session.session", "wb") as f:
+        f.write(base64.b64decode(session_b64))
+else:
+    raise RuntimeError("Session parts not found in environment variables")
 
-creds_dict = json.loads(os.environ.get("GDRIVE_CREDENTIALS_JSON"))
+# -------------------- Настройки --------------------
+API_ID = int(os.environ["API_ID"])
+API_HASH = os.environ["API_HASH"]
+CHANNEL = os.environ["CHANNEL"]  # например "nebrexnya"
+GDRIVE_FOLDER_ID = os.environ["GDRIVE_FOLDER_ID"]
 
+# -------------------- Google Drive --------------------
+creds_dict = json.loads(os.environ["GDRIVE_CREDENTIALS_JSON"])
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
 creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
 drive_service = build('drive', 'v3', credentials=creds)
 
-client = TelegramClient("session", API_ID, API_HASH)
+# -------------------- Telegram client --------------------
+client = TelegramClient("session", API_ID, API_HASH).start()
+entity = client.get_entity(CHANNEL)
+
+# -------------------- Flask app --------------------
 app = Flask(__name__)
 
-async def run_parser():
-    await client.start()
-    entity = await client.get_entity(CHANNEL)
-
+@app.route("/run")
+def run():
     week_ago = datetime.now(timezone.utc) - timedelta(days=7)
     offset_id = 0
     limit = 100
@@ -34,7 +45,7 @@ async def run_parser():
 
     with open(filename, "w", encoding="utf-8") as f:
         while True:
-            history = await client(GetHistoryRequest(
+            history = client(GetHistoryRequest(
                 peer=entity,
                 offset_id=offset_id,
                 offset_date=None,
@@ -50,8 +61,7 @@ async def run_parser():
 
             for msg in history.messages:
                 if not msg.date or msg.date < week_ago:
-                    return upload_file(filename)
-
+                    break
                 if msg.text:
                     link = f"https://t.me/{entity.username}/{msg.id}"
                     f.write(link + "\n")
@@ -59,16 +69,11 @@ async def run_parser():
 
             offset_id = history.messages[-1].id
 
-    upload_file(filename)
-
-def upload_file(filename):
+    # -------------------- Upload to Google Drive --------------------
     media = MediaFileUpload(filename, mimetype='text/plain')
     file_metadata = {'name': 'weekly_news.txt', 'parents': [GDRIVE_FOLDER_ID]}
     drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
 
-@app.route("/run")
-def run():
-    asyncio.run(run_parser())
     return "weekly_news.txt uploaded to Google Drive"
 
 if __name__ == "__main__":
