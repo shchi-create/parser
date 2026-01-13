@@ -1,45 +1,67 @@
 import os
+import json
 import base64
 import asyncio
 from flask import Flask, jsonify
 from telethon import TelegramClient
+from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
 
-# --- Переменные окружения ---
-API_ID = int(os.environ.get("API_ID", "123456"))           # твой api_id
-API_HASH = os.environ.get("API_HASH", "your_api_hash")     # твой api_hash
-CHANNEL = os.environ.get("CHANNEL_USERNAME", "@test_channel")
+# ---------- TELEGRAM SESSION ----------
+session_part1 = os.environ.get("SESSION_PART1")
+session_part2 = os.environ.get("SESSION_PART2")
+api_id = int(os.environ.get("API_ID"))
+api_hash = os.environ.get("API_HASH")
 
-SESSION_PART1 = os.environ.get("SESSION_PART1")
-SESSION_PART2 = os.environ.get("SESSION_PART2")
-
-if not SESSION_PART1 or not SESSION_PART2:
-    raise RuntimeError("Session parts not found in environment variables")
-
-# --- Воссоздаём сессию из частей ---
-session_bytes = base64.b64decode(SESSION_PART1 + SESSION_PART2)
-with open("session.session", "wb") as f:
+session_bytes = base64.b64decode(session_part1 + session_part2)
+session_file = "session.session"
+with open(session_file, "wb") as f:
     f.write(session_bytes)
 
-# --- Flask ---
+client = TelegramClient(session_file, api_id, api_hash)
+
+# ---------- GOOGLE DRIVE SETUP ----------
+creds_dict = json.loads(os.environ["GDRIVE_CREDENTIALS_JSON"])
+creds = Credentials.from_service_account_info(creds_dict)
+drive_service = build('drive', 'v3', credentials=creds)
+
+def upload_to_drive(filename, folder_id=None):
+    file_metadata = {'name': filename}
+    if folder_id:
+        file_metadata['parents'] = [folder_id]
+
+    media = MediaFileUpload(filename, mimetype='text/plain')
+    created_file = drive_service.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields='id'
+    ).execute()
+    return created_file.get('id')
+
+# ---------- FLASK APP ----------
 app = Flask(__name__)
 
-async def fetch_history(channel_username, limit=10):
-    client = TelegramClient("session.session", API_ID, API_HASH)
-    await client.start()
+@app.route("/fetch_last_message", methods=["GET"])
+def fetch_last_message():
     try:
-        entity = await client.get_entity(channel_username)
-        messages = await client.get_messages(entity, limit=limit)
-        return [{"id": m.id, "text": m.text} for m in messages]
-    finally:
-        await client.disconnect()
+        async def main():
+            await client.start()
+            channel = await client.get_entity("@nebrexnya")  # твой канал
+            messages = await client.get_messages(channel, limit=1)
+            if not messages:
+                return {"success": False, "message": "Сообщений нет"}
+            last_message = messages[0].message
+            with open("last_message.txt", "w", encoding="utf-8") as f:
+                f.write(last_message)
+            file_id = upload_to_drive("last_message.txt")
+            await client.disconnect()
+            return {"success": True, "message": "Сообщение загружено и сохранено на Google Drive", "file_id": file_id}
 
-@app.route("/run")
-def run():
-    try:
-        messages = asyncio.run(fetch_history(CHANNEL))
-        return jsonify({"messages": messages})
+        result = asyncio.run(main())
+        return jsonify(result)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"success": False, "message": str(e)})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
