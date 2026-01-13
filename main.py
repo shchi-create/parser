@@ -1,32 +1,42 @@
+import os
+import base64
+import asyncio
 from flask import Flask, jsonify
 from telethon import TelegramClient
-import os
 
-# Настройки Telethon
-API_ID = int(os.environ.get("API_ID", 123456))         # твой api_id
-API_HASH = os.environ.get("API_HASH", "your_api_hash") # твой api_hash
-SESSION_FILE = "session.session"                       # имя файла сессии
+# --- Переменные окружения ---
+API_ID = int(os.environ.get("API_ID", "123456"))           # твой api_id
+API_HASH = os.environ.get("API_HASH", "your_api_hash")     # твой api_hash
+CHANNEL = os.environ.get("CHANNEL_USERNAME", "@test_channel")
 
+SESSION_PART1 = os.environ.get("SESSION_PART1")
+SESSION_PART2 = os.environ.get("SESSION_PART2")
+
+if not SESSION_PART1 or not SESSION_PART2:
+    raise RuntimeError("Session parts not found in environment variables")
+
+# --- Воссоздаём сессию из частей ---
+session_bytes = base64.b64decode(SESSION_PART1 + SESSION_PART2)
+with open("session.session", "wb") as f:
+    f.write(session_bytes)
+
+# --- Flask ---
 app = Flask(__name__)
 
-# Асинхронная функция для получения сообщений
 async def fetch_history(channel_username, limit=10):
-    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+    client = TelegramClient("session.session", API_ID, API_HASH)
     await client.start()
     try:
         entity = await client.get_entity(channel_username)
         messages = await client.get_messages(entity, limit=limit)
-        result = [{"id": m.id, "text": m.text} for m in messages]
+        return [{"id": m.id, "text": m.text} for m in messages]
     finally:
         await client.disconnect()
-    return result
 
-# Flask маршрут
 @app.route("/run")
 def run():
-    channel = os.environ.get("CHANNEL_USERNAME", "@test_channel")  # канал из переменной окружения
     try:
-        messages = asyncio.run(fetch_history(channel))
+        messages = asyncio.run(fetch_history(CHANNEL))
         return jsonify({"messages": messages})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
