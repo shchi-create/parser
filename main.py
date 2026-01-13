@@ -3,7 +3,7 @@ import json
 import asyncio
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from telethon import TelegramClient, events
+from telethon import TelegramClient
 
 # =========================
 # Переменные окружения
@@ -12,16 +12,20 @@ API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")
 DOC_ID = os.getenv("DOC_ID")
-GDRIVE_CREDENTIALS_JSON = os.getenv("GDRIVE_CREDENTIALS_JSON")  # JSON строка
+GDRIVE_CREDENTIALS_JSON = os.getenv("GDRIVE_CREDENTIALS_JSON")  # JSON в виде строки
+
+SESSION_PART1 = os.getenv("SESSION_PART1")
+SESSION_PART2 = os.getenv("SESSION_PART2")
+
+# Собираем полную сессию Telegram
+SESSION_STRING = (SESSION_PART1 or '') + (SESSION_PART2 or '')
 
 # =========================
 # Google Sheets
 # =========================
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 
-# Преобразуем JSON-строку в словарь
 credentials_info = json.loads(GDRIVE_CREDENTIALS_JSON)
-
 credentials = service_account.Credentials.from_service_account_info(
     credentials_info, scopes=SCOPES
 )
@@ -30,13 +34,17 @@ service = build('sheets', 'v4', credentials=credentials)
 sheet = service.spreadsheets()
 
 # =========================
-# Telegram Client
+# Telegram Client с готовой сессией
 # =========================
-client = TelegramClient('bot_session', API_ID, API_HASH)
+client = TelegramClient(
+    session=SESSION_STRING,  # используем сессию из строк
+    api_id=API_ID,
+    api_hash=API_HASH
+)
 
 async def main():
     await client.start()
-    print("Бот запущен")
+    print("Бот запущен с существующей сессией")
 
     # Получаем данные из Google Sheets (пример: первый лист, A1:A10)
     result = sheet.values().get(spreadsheetId=DOC_ID, range='A1:A10').execute()
@@ -52,5 +60,7 @@ async def main():
 
     print("Все данные отправлены")
 
-# Запуск асинхронного цикла
+# =========================
+# Запуск
+# =========================
 asyncio.run(main())
