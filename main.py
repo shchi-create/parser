@@ -32,7 +32,13 @@ drive_service = build('drive', 'v3', credentials=creds)
 # -------------------- Telegram client --------------------
 client = TelegramClient("session", API_ID, API_HASH)
 client.start()
-entity = client.get_entity(CHANNEL)
+
+# Проверка подключения к каналу
+try:
+    entity = client.get_entity(CHANNEL)
+except Exception as e:
+    print("ERROR getting Telegram entity:", e)
+    raise
 
 # -------------------- Flask app --------------------
 app = Flask(__name__)
@@ -45,19 +51,22 @@ def run():
         limit = 100
         filename = "/tmp/weekly_news.txt"
 
-        # -------------------- Сбор постов --------------------
         with open(filename, "w", encoding="utf-8") as f:
             while True:
-                history = await client(GetHistoryRequest(
-                    peer=entity,
-                    offset_id=offset_id,
-                    offset_date=None,
-                    add_offset=0,
-                    limit=limit,
-                    max_id=0,
-                    min_id=0,
-                    hash=0
-                ))
+                try:
+                    history = await client(GetHistoryRequest(
+                        peer=entity,
+                        offset_id=offset_id,
+                        offset_date=None,
+                        add_offset=0,
+                        limit=limit,
+                        max_id=0,
+                        min_id=0,
+                        hash=0
+                    ))
+                except Exception as e:
+                    print("ERROR fetching history:", e)
+                    raise
 
                 if not history.messages:
                     break
@@ -73,12 +82,24 @@ def run():
                 offset_id = history.messages[-1].id
 
         # -------------------- Upload to Google Drive --------------------
-        media = MediaFileUpload(filename, mimetype='text/plain')
-        file_metadata = {'name': 'weekly_news.txt', 'parents': [GDRIVE_FOLDER_ID]}
-        drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+        try:
+            media = MediaFileUpload(filename, mimetype='text/plain')
+            file_metadata = {'name': 'weekly_news.txt', 'parents': [GDRIVE_FOLDER_ID]}
+            drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+        except Exception as e:
+            print("ERROR uploading to Google Drive:", e)
+            raise
+
         return "weekly_news.txt uploaded to Google Drive"
 
-    return client.loop.run_until_complete(fetch_and_upload())
+    # Отлов ошибок при запуске Telethon внутри Flask
+    try:
+        return client.loop.run_until_complete(fetch_and_upload())
+    except Exception as e:
+        print("ERROR in /run:", e)
+        return f"Error: {e}", 500
 
 if __name__ == "__main__":
+    print("SESSION_PART1 length:", len(os.environ.get("SESSION_PART1", "")))
+    print("SESSION_PART2 length:", len(os.environ.get("SESSION_PART2", "")))
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
