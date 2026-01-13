@@ -1,75 +1,56 @@
 import os
+import json
 import asyncio
-from telethon import TelegramClient
-from flask import Flask, jsonify
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
-import nest_asyncio
+from telethon import TelegramClient, events
 
-# === Apply nest_asyncio to allow Flask + Telethon coexistence ===
-nest_asyncio.apply()
+# =========================
+# Переменные окружения
+# =========================
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
+CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")
+DOC_ID = os.getenv("DOC_ID")
+GDRIVE_CREDENTIALS_JSON = os.getenv("GDRIVE_CREDENTIALS_JSON")  # JSON строка
 
-# === Telegram credentials ===
-API_ID = int(os.environ.get("API_ID"))
-API_HASH = os.environ.get("API_HASH")
-CHANNEL_USERNAME = os.environ.get("CHANNEL_USERNAME")
+# =========================
+# Google Sheets
+# =========================
+SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 
-# === Google Docs credentials ===
-DOC_ID = os.environ.get("DOC_ID")
-GDRIVE_CREDENTIALS_JSON = os.environ.get("GDRIVE_CREDENTIALS_JSON")
-SCOPES = ["https://www.googleapis.com/auth/documents"]
+# Преобразуем JSON-строку в словарь
+credentials_info = json.loads(GDRIVE_CREDENTIALS_JSON)
 
-if not all([API_ID, API_HASH, CHANNEL_USERNAME, DOC_ID, GDRIVE_CREDENTIALS_JSON]):
-    raise ValueError("Не все переменные окружения заданы: API_ID, API_HASH, CHANNEL_USERNAME, DOC_ID, GDRIVE_CREDENTIALS_JSON")
-
-# === Initialize Google Docs API ===
-credentials = service_account.Credentials.from_service_account_file(
-    GDRIVE_CREDENTIALS_JSON, scopes=SCOPES
+credentials = service_account.Credentials.from_service_account_info(
+    credentials_info, scopes=SCOPES
 )
-docs_service = build('docs', 'v1', credentials=credentials)
 
-# === Initialize Telegram client ===
-client = TelegramClient('session', API_ID, API_HASH)
+service = build('sheets', 'v4', credentials=credentials)
+sheet = service.spreadsheets()
 
-# === Flask app ===
-app = Flask(__name__)
+# =========================
+# Telegram Client
+# =========================
+client = TelegramClient('bot_session', API_ID, API_HASH)
 
-async def fetch_last_message():
-    async with client:
-        async for message in client.iter_messages(CHANNEL_USERNAME, limit=1):
-            return message.text
-    return None
+async def main():
+    await client.start()
+    print("Бот запущен")
 
-def append_text_to_google_doc(text: str):
-    try:
-        requests = [
-            {
-                "insertText": {
-                    "location": {"index": 1},  # вставляем в начало документа
-                    "text": text + "\n\n"
-                }
-            }
-        ]
-        docs_service.documents().batchUpdate(documentId=DOC_ID, body={"requests": requests}).execute()
-        return True
-    except HttpError as e:
-        print(f"Ошибка Google Docs API: {e}")
-        return False
+    # Получаем данные из Google Sheets (пример: первый лист, A1:A10)
+    result = sheet.values().get(spreadsheetId=DOC_ID, range='A1:A10').execute()
+    values = result.get('values', [])
+    print("Данные из Google Sheets:", values)
 
-@app.route("/run", methods=["GET"])
-def run():
-    try:
-        text = asyncio.get_event_loop().run_until_complete(fetch_last_message())
-        if not text:
-            return jsonify({"success": False, "message": "Сообщение не найдено"})
-        success = append_text_to_google_doc(text)
-        if success:
-            return jsonify({"success": True, "message": "Сообщение успешно сохранено в Google Docs"})
-        else:
-            return jsonify({"success": False, "message": "Ошибка при сохранении в Google Docs"})
-    except Exception as e:
-        return jsonify({"success": False, "message": str(e)})
+    # Отправляем каждую строку в канал
+    for row in values:
+        text = row[0] if row else ''
+        if text:
+            await client.send_message(CHANNEL_USERNAME, text)
+            print(f"Отправлено в канал: {text}")
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    print("Все данные отправлены")
+
+# Запуск асинхронного цикла
+asyncio.run(main())
