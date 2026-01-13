@@ -1,7 +1,6 @@
 import os
 import base64
 import json
-import nest_asyncio   # <-- новый импорт
 from datetime import datetime, timedelta, timezone
 from flask import Flask
 from telethon import TelegramClient
@@ -10,16 +9,8 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2.service_account import Credentials
 
-nest_asyncio.apply()  # <-- применяем патч для Flask/Railway
-
-
-# -------------------- Telegram session --------------------
-session_b64 = os.environ.get("SESSION_PART1", "") + os.environ.get("SESSION_PART2", "")
-if session_b64:
-    with open("session.session", "wb") as f:
-        f.write(base64.b64decode(session_b64))
-else:
-    raise RuntimeError("Session parts not found in environment variables")
+# -------------------- Flask app --------------------
+app = Flask(__name__)
 
 # -------------------- Настройки --------------------
 API_ID = int(os.environ["API_ID"])
@@ -33,31 +24,38 @@ SCOPES = ['https://www.googleapis.com/auth/drive.file']
 creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
 drive_service = build('drive', 'v3', credentials=creds)
 
-# -------------------- Telegram client --------------------
-client = TelegramClient("session", API_ID, API_HASH)
-client.start()
+# -------------------- Telegram session --------------------
+session_b64 = os.environ.get("SESSION_PART1", "") + os.environ.get("SESSION_PART2", "")
+if session_b64:
+    with open("session.session", "wb") as f:
+        f.write(base64.b64decode(session_b64))
+else:
+    raise RuntimeError("Session parts not found in environment variables")
 
-# Проверка подключения к каналу
-try:
-    entity = client.get_entity(CHANNEL)
-except Exception as e:
-    print("ERROR getting Telegram entity:", e)
-    raise
+print("SESSION_PART1 length:", len(os.environ.get("SESSION_PART1", "")))
+print("SESSION_PART2 length:", len(os.environ.get("SESSION_PART2", "")))
 
-# -------------------- Flask app --------------------
-app = Flask(__name__)
-
+# -------------------- Route для запуска --------------------
 @app.route("/run")
 def run():
-    async def fetch_and_upload():
-        week_ago = datetime.now(timezone.utc) - timedelta(days=7)
-        offset_id = 0
-        limit = 100
-        filename = "/tmp/weekly_news.txt"
+    import asyncio
 
-        with open(filename, "w", encoding="utf-8") as f:
-            while True:
-                try:
+    async def fetch_and_upload():
+        # Создаем клиента **только внутри async**
+        async with TelegramClient("session", API_ID, API_HASH) as client:
+            try:
+                entity = await client.get_entity(CHANNEL)
+            except Exception as e:
+                print("ERROR getting Telegram entity:", e)
+                raise
+
+            week_ago = datetime.now(timezone.utc) - timedelta(days=7)
+            offset_id = 0
+            limit = 100
+            filename = "/tmp/weekly_news.txt"
+
+            with open(filename, "w", encoding="utf-8") as f:
+                while True:
                     history = await client(GetHistoryRequest(
                         peer=entity,
                         offset_id=offset_id,
@@ -68,42 +66,37 @@ def run():
                         min_id=0,
                         hash=0
                     ))
-                except Exception as e:
-                    print("ERROR fetching history:", e)
-                    raise
 
-                if not history.messages:
-                    break
-
-                for msg in history.messages:
-                    if not msg.date or msg.date < week_ago:
+                    if not history.messages:
                         break
-                    if msg.text:
-                        link = f"https://t.me/{entity.username}/{msg.id}"
-                        f.write(link + "\n")
-                        f.write(msg.text + "\n\n")
 
-                offset_id = history.messages[-1].id
+                    for msg in history.messages:
+                        if not msg.date or msg.date < week_ago:
+                            break
+                        if msg.text:
+                            link = f"https://t.me/{entity.username}/{msg.id}"
+                            f.write(link + "\n")
+                            f.write(msg.text + "\n\n")
 
-        # -------------------- Upload to Google Drive --------------------
-        try:
-            media = MediaFileUpload(filename, mimetype='text/plain')
-            file_metadata = {'name': 'weekly_news.txt', 'parents': [GDRIVE_FOLDER_ID]}
-            drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
-        except Exception as e:
-            print("ERROR uploading to Google Drive:", e)
-            raise
+                    offset_id = history.messages[-1].id
 
-        return "weekly_news.txt uploaded to Google Drive"
+            # -------------------- Upload to Google Drive --------------------
+            try:
+                media = MediaFileUpload(filename, mimetype='text/plain')
+                file_metadata = {'name': 'weekly_news.txt', 'parents': [GDRIVE_FOLDER_ID]}
+                drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+            except Exception as e:
+                print("ERROR uploading to Google Drive:", e)
+                raise
 
-    # Отлов ошибок при запуске Telethon внутри Flask
+            return "weekly_news.txt uploaded to Google Drive"
+
     try:
-        return client.loop.run_until_complete(fetch_and_upload())
+        return asyncio.run(fetch_and_upload())
     except Exception as e:
         print("ERROR in /run:", e)
         return f"Error: {e}", 500
 
+# -------------------- Main --------------------
 if __name__ == "__main__":
-    print("SESSION_PART1 length:", len(os.environ.get("SESSION_PART1", "")))
-    print("SESSION_PART2 length:", len(os.environ.get("SESSION_PART2", "")))
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
