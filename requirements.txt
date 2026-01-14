@@ -1,7 +1,9 @@
-Flask>=2.3.0,<2.4
-telethon>=1.24
-google-api-python-client>=2.0
-google-auth>=2.0
-google-auth-oauthlib>=0.4.6
-nest_asyncio
-
+telethon
+google-api-python-client
+google-auth
+google-auth-httplib2
+google-auth-oauthlib
+fastapi
+uvicorn
+python-multipart
+pytz
