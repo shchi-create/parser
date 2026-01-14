@@ -114,7 +114,7 @@ async def index():
     </body></html>
     """
 
-@app.post("/run/{mode}", response_class=HTMLResponse)
+@app.api_route("/run/{mode}", methods=["GET", "POST"], response_class=HTMLResponse)
 async def run(mode:str):
     doc_id = env("DOC_ID")
 
