@@ -3,62 +3,61 @@ import base64
 import json
 import pytz
 from datetime import datetime, timedelta
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from telethon import TelegramClient
 from telethon.sessions import SQLiteSession
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
-API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
-CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")
-DOC_ID = os.getenv("DOC_ID")
-
-SESSION_PART1 = os.getenv("SESSION_PART1")
-SESSION_PART2 = os.getenv("SESSION_PART2")
-SESSION_B64 = SESSION_PART1 + SESSION_PART2
-
-GDRIVE_CREDENTIALS_JSON = os.getenv("GDRIVE_CREDENTIALS_JSON")
-
 TIMEZONE = pytz.timezone("Europe/Moscow")
-
 app = FastAPI()
+
+def env(name):
+    value = os.getenv(name)
+    if not value:
+        raise RuntimeError(f"Missing env var: {name}")
+    return value
 
 # ---------- Telegram session restore ----------
 def restore_session():
-    session_bytes = base64.b64decode(SESSION_B64)
+    session_b64 = env("SESSION_PART1") + env("SESSION_PART2")
+    session_bytes = base64.b64decode(session_b64)
     with open("session.session", "wb") as f:
         f.write(session_bytes)
     return SQLiteSession("session")
 
 # ---------- Google Docs ----------
 def get_docs_service():
-    creds_dict = json.loads(GDRIVE_CREDENTIALS_JSON)
+    creds_dict = json.loads(env("GDRIVE_CREDENTIALS_JSON"))
     creds = Credentials.from_service_account_info(
         creds_dict,
         scopes=["https://www.googleapis.com/auth/documents"]
     )
     return build("docs", "v1", credentials=creds)
 
-def clear_doc(service):
-    doc = service.documents().get(documentId=DOC_ID).execute()
+def clear_doc(service, doc_id):
+    doc = service.documents().get(documentId=doc_id).execute()
     length = doc["body"]["content"][-1]["endIndex"]
     service.documents().batchUpdate(
-        documentId=DOC_ID,
+        documentId=doc_id,
         body={"requests":[{"deleteContentRange":{"range":{"startIndex":1,"endIndex":length-1}}}]}
     ).execute()
 
-def write_doc(service, text):
+def write_doc(service, doc_id, text):
     service.documents().batchUpdate(
-        documentId=DOC_ID,
+        documentId=doc_id,
         body={"requests":[{"insertText":{"location":{"index":1},"text":text}}]}
     ).execute()
 
 # ---------- Telegram parsing ----------
 async def fetch_posts(mode):
+    api_id = int(env("API_ID"))
+    api_hash = env("API_HASH")
+    channel = env("CHANNEL_USERNAME")
+
     session = restore_session()
-    client = TelegramClient(session, API_ID, API_HASH)
+    client = TelegramClient(session, api_id, api_hash)
     await client.connect()
 
     posts = []
@@ -67,19 +66,19 @@ async def fetch_posts(mode):
     if mode == "week":
         monday = (now - timedelta(days=now.weekday())).replace(hour=0,minute=0,second=0,microsecond=0)
 
-    async for msg in client.iter_messages(CHANNEL_USERNAME, limit=100):
+    async for msg in client.iter_messages(channel, limit=100):
         if not msg.text:
             continue
 
         msg_date = msg.date.astimezone(TIMEZONE)
 
         if mode == "last":
-            link = f"https://t.me/{CHANNEL_USERNAME[1:]}/{msg.id}"
+            link = f"https://t.me/{channel[1:]}/{msg.id}"
             posts.append(f"{link}\n{msg.text}\n\n")
             break
 
         if msg_date >= monday:
-            link = f"https://t.me/{CHANNEL_USERNAME[1:]}/{msg.id}"
+            link = f"https://t.me/{channel[1:]}/{msg.id}"
             posts.append(f"{link}\n{msg.text}\n\n")
 
     await client.disconnect()
@@ -89,26 +88,25 @@ async def fetch_posts(mode):
 @app.get("/run", response_class=HTMLResponse)
 async def index():
     return """
-    <html>
-    <body style="font-family:Arial">
-        <h2>Telegram Parser</h2>
-        <form action="/run/last" method="post"><button>Last</button></form><br>
-        <form action="/run/week" method="post"><button>Week</button></form>
-    </body>
-    </html>
+    <html><body style="font-family:Arial">
+    <h2>Telegram Parser</h2>
+    <form action="/run/last" method="post"><button>Last</button></form><br>
+    <form action="/run/week" method="post"><button>Week</button></form>
+    </body></html>
     """
 
 @app.post("/run/{mode}", response_class=HTMLResponse)
 async def run(mode:str):
-    posts, monday, now = await fetch_posts(mode)
+    doc_id = env("DOC_ID")
 
+    posts, monday, now = await fetch_posts(mode)
     service = get_docs_service()
-    clear_doc(service)
+    clear_doc(service, doc_id)
 
     if mode=="week":
         title = f"Посты за неделю {monday.strftime('%d.%m')}–{now.strftime('%d.%m')}\n\n"
     else:
         title = f"Последний пост на {now.strftime('%d.%m.%Y %H:%M')}\n\n"
 
-    write_doc(service, title + "".join(posts))
+    write_doc(service, doc_id, title + "".join(posts))
     return "<h3>Готово. Документ обновлен.</h3>"
