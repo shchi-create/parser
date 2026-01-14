@@ -38,10 +38,29 @@ def get_docs_service():
 
 def clear_doc(service, doc_id):
     doc = service.documents().get(documentId=doc_id).execute()
-    length = doc["body"]["content"][-1]["endIndex"]
+    content = doc.get("body", {}).get("content", [])
+
+    if len(content) < 2:
+        return  # документ пустой, ничего удалять не нужно
+
+    end_index = content[-1].get("endIndex", 1)
+    if end_index <= 1:
+        return
+
     service.documents().batchUpdate(
         documentId=doc_id,
-        body={"requests":[{"deleteContentRange":{"range":{"startIndex":1,"endIndex":length-1}}}]}
+        body={
+            "requests": [
+                {
+                    "deleteContentRange": {
+                        "range": {
+                            "startIndex": 1,
+                            "endIndex": end_index - 1
+                        }
+                    }
+                }
+            ]
+        }
     ).execute()
 
 def write_doc(service, doc_id, text):
