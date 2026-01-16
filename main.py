@@ -13,6 +13,20 @@ from googleapiclient.discovery import build
 TIMEZONE = pytz.timezone("Europe/Moscow")
 app = FastAPI()
 
+# ---------- ignore rules ----------
+IGNORE_PREFIXES = (
+    "#ВекторыДня",
+    "#ЕстьМнение",
+    "События, которые повлияют на рынок"
+)
+
+def should_ignore(text: str) -> bool:
+    if not text:
+        return True
+    stripped = text.lstrip()
+    return stripped.startswith(IGNORE_PREFIXES)
+
+# ---------- env helper ----------
 def env(name):
     value = os.getenv(name)
     if not value:
@@ -41,7 +55,7 @@ def clear_doc(service, doc_id):
     content = doc.get("body", {}).get("content", [])
 
     if len(content) < 2:
-        return  # документ пустой, ничего удалять не нужно
+        return
 
     end_index = content[-1].get("endIndex", 1)
     if end_index <= 1:
@@ -66,7 +80,16 @@ def clear_doc(service, doc_id):
 def write_doc(service, doc_id, text):
     service.documents().batchUpdate(
         documentId=doc_id,
-        body={"requests":[{"insertText":{"location":{"index":1},"text":text}}]}
+        body={
+            "requests": [
+                {
+                    "insertText": {
+                        "location": {"index": 1},
+                        "text": text
+                    }
+                }
+            ]
+        }
     ).execute()
 
 # ---------- Telegram parsing ----------
@@ -83,10 +106,15 @@ async def fetch_posts(mode):
     now = datetime.now(TIMEZONE)
 
     if mode == "week":
-        monday = (now - timedelta(days=now.weekday())).replace(hour=0,minute=0,second=0,microsecond=0)
+        monday = (now - timedelta(days=now.weekday())).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
 
     async for msg in client.iter_messages(channel, limit=100):
         if not msg.text:
+            continue
+
+        if should_ignore(msg.text):
             continue
 
         msg_date = msg.date.astimezone(TIMEZONE)
@@ -101,29 +129,38 @@ async def fetch_posts(mode):
             posts.append(f"{link}\n{msg.text}\n\n")
 
     await client.disconnect()
-    return posts[::-1], monday if mode=="week" else None, now
+    return posts[::-1], monday if mode == "week" else None, now
 
 # ---------- UI ----------
 @app.get("/run", response_class=HTMLResponse)
 async def index():
     return """
-    <html><body style="font-family:Arial">
-    <h2>Telegram Parser</h2>
-    <form action="/run/last" method="post"><button>Last</button></form><br>
-    <form action="/run/week" method="post"><button>Week</button></form>
-    </body></html>
+    <html>
+      <body style="font-family:Arial">
+        <h2>Telegram Parser</h2>
+        <form action="/run/last" method="post">
+            <button>Last</button>
+        </form><br>
+        <form action="/run/week" method="post">
+            <button>Week</button>
+        </form>
+      </body>
+    </html>
     """
 
 @app.api_route("/run/{mode}", methods=["GET", "POST"], response_class=HTMLResponse)
-async def run(mode:str):
+async def run(mode: str):
     doc_id = env("DOC_ID")
 
     posts, monday, now = await fetch_posts(mode)
     service = get_docs_service()
     clear_doc(service, doc_id)
 
-    if mode=="week":
-        title = f"Посты за неделю {monday.strftime('%d.%m')}–{now.strftime('%d.%m')}\n\n"
+    if mode == "week":
+        title = (
+            f"Посты за неделю "
+            f"{monday.strftime('%d.%m')}–{now.strftime('%d.%m')}\n\n"
+        )
     else:
         title = f"Последний пост на {now.strftime('%d.%m.%Y %H:%M')}\n\n"
 
