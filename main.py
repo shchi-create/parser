@@ -2,6 +2,7 @@ import os
 import base64
 import json
 import pytz
+import re
 from datetime import datetime, timedelta
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
@@ -14,18 +15,16 @@ TIMEZONE = pytz.timezone("Europe/Moscow")
 app = FastAPI()
 
 # ---------- ignore rules ----------
-IGNORE_PREFIXES = (
+IGNORE_FIRST_WORDS = {
     "#ВекторыДня",
     "#ЕстьМнение",
-    "#События"
-)
+    "#События",
+}
 
-import re
-
-ZERO_WIDTH = r"[\u200b\u200c\u200d\u2060\uFEFF]"
+ZERO_WIDTH_RE = re.compile(r"[\u200b\u200c\u200d\u2060\uFEFF]")
 
 def normalize_text(text: str) -> str:
-    text = re.sub(ZERO_WIDTH, "", text)
+    text = ZERO_WIDTH_RE.sub("", text)
     return text.lstrip()
 
 def should_ignore(text: str) -> bool:
@@ -37,11 +36,7 @@ def should_ignore(text: str) -> bool:
     first_line = clean.splitlines()[0]
     first_word = first_line.split(maxsplit=1)[0]
 
-    return first_word in (
-        "#ВекторыДня",
-        "#ЕстьМнение",
-        "#События",
-    )
+    return first_word in IGNORE_FIRST_WORDS
 
 # ---------- env helper ----------
 def env(name):
