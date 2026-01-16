@@ -17,7 +17,7 @@ app = FastAPI()
 IGNORE_PREFIXES = (
     "#ВекторыДня",
     "#ЕстьМнение",
-    "События, которые повлияют на рынок"
+    "#События"
 )
 
 def should_ignore(text: str) -> bool:
