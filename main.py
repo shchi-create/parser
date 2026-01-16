@@ -20,11 +20,28 @@ IGNORE_PREFIXES = (
     "#События"
 )
 
+import re
+
+ZERO_WIDTH = r"[\u200b\u200c\u200d\u2060\uFEFF]"
+
+def normalize_text(text: str) -> str:
+    text = re.sub(ZERO_WIDTH, "", text)
+    return text.lstrip()
+
 def should_ignore(text: str) -> bool:
     if not text:
         return True
-    stripped = text.lstrip()
-    return stripped.startswith(IGNORE_PREFIXES)
+
+    clean = normalize_text(text)
+
+    first_line = clean.splitlines()[0]
+    first_word = first_line.split(maxsplit=1)[0]
+
+    return first_word in (
+        "#ВекторыДня",
+        "#ЕстьМнение",
+        "#События",
+    )
 
 # ---------- env helper ----------
 def env(name):
