@@ -18,8 +18,7 @@ logging.basicConfig(
 )
 
 # --- ЗАГРУЗКА ПЕРЕМЕННЫХ ИЗ ОКРУЖЕНИЯ ---
-# Если переменные не найдены, скрипт выдаст ошибку или использует дефолт (для тестов)
-CHANNEL_NAME = os.getenv("CHANNEL_NAME", "nebrexnya")
+CHANNEL_NAME = os.getenv("CHANNEL_NAME")
 DOCUMENT_ID = os.getenv("DOCUMENT_ID")
 # Вместо пути к файлу, мы ожидаем содержимое JSON-ключа в переменной
 GOOGLE_CREDS_JSON = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
